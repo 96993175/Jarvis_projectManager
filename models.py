@@ -7,7 +7,7 @@ class Member(BaseModel):
     email: str
     phone: str = ""
     role: str = "Team Member"
-    skills: str = ""
+    skills: List[str] = []
 
 
 class RegisterRequest(BaseModel):
