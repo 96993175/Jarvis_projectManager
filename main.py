@@ -166,6 +166,7 @@ def get_team(team_id: str):
 def chat(message_data: dict = Body(...)):
     """Handle all chat interactions including welcome messages"""
     member_id = message_data.get("member_id")
+    team_id = message_data.get("team_id")
     message = message_data.get("message")
     is_welcome = message_data.get("is_welcome", False)
     
@@ -181,7 +182,9 @@ def chat(message_data: dict = Body(...)):
     if not member:
         return {"success": False, "error": "Member not found"}
     
-    team = db.team_details.find_one({"_id": member["team_id"]})
+    # Use provided team_id or fallback to member's team_id
+    actual_team_id = team_id or member.get("team_id")
+    team = db.team_details.find_one({"_id": actual_team_id})
     if not team:
         return {"success": False, "error": "Team not found"}
     
