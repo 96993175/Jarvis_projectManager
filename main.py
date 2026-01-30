@@ -8,19 +8,20 @@ from groq import Groq
 from fastapi import Body
 from models import RegisterRequest
 from memory_store import save_memory
-from ui.desktop_timer_manager import start_desktop_timer
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
 
 app = FastAPI()
 
-# ✅ CORS (MANDATORY for Cloudflare)
+# ✅ CORS Configuration for Render Deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Allow all origins for development
+    allow_origins=["*"],   # Allow all origins for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    # Allow credentials to be sent with requests
-    # This is important for Cloudflare tunnel
 )
 
 # 🔹 Health check

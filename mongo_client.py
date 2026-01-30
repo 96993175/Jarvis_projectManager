@@ -1,10 +1,20 @@
 from pymongo import MongoClient
 import os
 
-MONGO_URI = os.getenv(
-    "MONGO_URI",
-    "mongodb+srv://krushimitra14_db_user:uSS5SI0k3eiPG4a6@teamdb.hdo4ebt.mongodb.net/?appName=TeamDB"
-)
+# Get MongoDB URI from environment variable
+MONGO_URI = os.getenv("MONGO_URI")
 
-client = MongoClient(MONGO_URI)
-db = client["jarvis_memory"]  # Single database for all memory
+if not MONGO_URI:
+    raise ValueError("MONGO_URI environment variable is required")
+
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    db = client["jarvis_memory"]  # Single database for all memory
+    
+    # Test connection
+    client.admin.command('ping')
+    print("✅ Connected to MongoDB successfully")
+except Exception as e:
+    print(f"❌ MongoDB connection failed: {e}")
+    client = None
+    db = None
