@@ -207,12 +207,15 @@ Team: {team['team_name']}
 Problem: {team['problem_statement']}
 Duration: {team['duration_hours']} hours
 
+Skills: {", ".join(member.get("skills", []))}
+
 Create a warm, motivating welcome message that:
-- Mentions their specific role and skills
-- Explains how they contribute to the team
-- Sets positive expectations for collaboration
-- Keeps it concise (2-3 sentences)
+- Speaks directly to {member['name']}
+- Explains how their role helps the team
+- Sounds human, confident, and friendly
+- Avoids generic phrases
 """
+
     else:
         # Regular chat prompt with memory
         recent_history = conversation_history[-5:]  # Last 5 messages for context
