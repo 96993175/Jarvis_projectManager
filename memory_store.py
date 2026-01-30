@@ -25,8 +25,10 @@ def save_memory(team_name: str, mem_type: str, data: dict):
     elif mem_type.upper() == "MEMBER":
         collection = db["members"]
         # Create member document with simplified schema
+        member_id = f"MEM_{str(uuid.uuid4().hex[:4]).upper()}"
         member_doc = {
-            "_id": f"MEM_{str(uuid.uuid4().hex[:4]).upper()}",
+            "_id": member_id,  # MongoDB ObjectId
+            "member_id": member_id,  # String ID for frontend lookup
             "team_id": data.get("team_id", "TEAM_UNKNOWN"),
             "member_index": data.get("member_index", 1),
             "is_leader": data.get("is_leader", False),

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import Dict, Any
 
 
 class Member(BaseModel):
@@ -7,7 +7,7 @@ class Member(BaseModel):
     email: str
     phone: str = ""
     role: str = "Team Member"
-    skills: List[str] = []
+    skills: str = ""
 
 
 class RegisterRequest(BaseModel):

@@ -30,9 +30,6 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
-@app.options("/{path:path}")
-def options_handler(path: str):
-    return {}
 
 # 🔹 Timer endpoints
 @app.post("/api/timer/start")
@@ -145,81 +142,131 @@ def register(req: RegisterRequest):
 
 @app.get("/api/member/{member_id}")
 def get_member(member_id: str):
-    # TEMP mock (for now)
-    return {
-        "success": True,
-        "member": {
-            "id": member_id,
-            "name": "Test Member",
-            "role": "Backend Developer",
-            "skills": "Python, FastAPI"
-        }
-    }
-@app.get("/api/team/info")
-def get_team_info():
-    return {
-        "success": True,
-        "team": {
-            "team_id": "TEAM_92AF",
-            "team_name": "Jarvis Hackers",
-            "problem_statement": "Task & Project Collaboration Tool",
-            "hackathon_duration_hours": 36
-        }
-    }
-@app.get("/debug/routes")
-def debug_routes():
-    return {"routes": ["health", "api/member/{id}", "api/team/info"]}
+    from mongo_client import db
 
-from fastapi import Body
+    member = db.members.find_one({"member_id": member_id})
+    if not member:
+        return {"success": False, "message": "Member not found"}
 
-@app.post("/api/member/welcome")
-def member_welcome(data: dict = Body(...)):
-    team = data.get("team")        # full team object
-    member = data.get("member")    # full member object
+    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
+    return {"success": True, "member": member}
 
-    if not team or not member:
-        return {"success": False, "message": "Missing data"}
+@app.get("/api/team/{team_id}")
+def get_team(team_id: str):
+    from mongo_client import db
 
-    # 🔹 AI PROMPT (THIS IS THE MAGIC)
-    prompt = f"""
+    team = db.team_details.find_one({"_id": team_id})
+    if not team:
+        return {"success": False, "message": "Team not found"}
+
+    team["_id"] = str(team["_id"])
+    return {"success": True, "team": team}
+
+@app.post("/api/chat")
+def chat(message_data: dict = Body(...)):
+    """Handle all chat interactions including welcome messages"""
+    member_id = message_data.get("member_id")
+    message = message_data.get("message")
+    is_welcome = message_data.get("is_welcome", False)
+    
+    if not member_id or not message:
+        return {"success": False, "error": "Missing member_id or message"}
+    
+    from mongo_client import db
+    from groq import Groq
+    import json
+    
+    # Get member and team data
+    member = db.members.find_one({"member_id": member_id})
+    if not member:
+        return {"success": False, "error": "Member not found"}
+    
+    team = db.team_details.find_one({"_id": member["team_id"]})
+    if not team:
+        return {"success": False, "error": "Team not found"}
+    
+    # Build conversation context
+    conversation_history = member.get("chat_history", [])
+    
+    # Add current message to history
+    conversation_history.append({
+        "role": "user",
+        "message": message,
+        "timestamp": datetime.utcnow()
+    })
+    
+    # Build prompt with context
+    if is_welcome:
+        # Welcome message prompt
+        prompt = f"""
 You are Jarvis, an AI hackathon project coordinator.
 
-Welcome a team member in a friendly, motivating way.
+Welcome {member['name']} ({member['role']}) to the team!
 
-Member details:
-Name: {member['name']}
-Role: {member['role']}
-Skills: {member.get('skills', 'N/A')}
+Team: {team['team_name']}
+Problem: {team['problem_statement']}
+Duration: {team['duration_hours']} hours
 
-Team details:
-Team name: {team['team_name']}
-Problem statement: {team['problem_statement']}
-Hackathon duration: {team['duration_hours']} hours
-
-Guidelines:
-- Use the member's name
-- Explain why their role is important
-- Motivate them to collaborate
-- Keep it short, warm, and confident
-- Do NOT mention IDs or technical terms
+Create a warm, motivating welcome message that:
+- Mentions their specific role and skills
+- Explains how they contribute to the team
+- Sets positive expectations for collaboration
+- Keeps it concise (2-3 sentences)
 """
-    from groq import Groq
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    else:
+        # Regular chat prompt with memory
+        recent_history = conversation_history[-5:]  # Last 5 messages for context
+        history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
+        
+        prompt = f"""
+You are Jarvis, an AI hackathon project coordinator having a conversation with {member['name']}.
 
-    # 🔹 GROQ AI CALL
+Recent conversation:
+{history_text}
+
+Member's role: {member['role']}
+Team: {team['team_name']}
+Problem: {team['problem_statement']}
+
+Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination.
+"""
+    
+    # Call Groq API
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     response = client.chat.completions.create(
         model="llama3-8b-8192",
         messages=[
             {"role": "system", "content": "You are Jarvis, a helpful AI coordinator."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.6,
-        max_tokens=200
+        temperature=0.7,
+        max_tokens=300
     )
-
-    ai_message = response.choices[0].message.content
-
+    
+    ai_response = response.choices[0].message.content
+    
+    # Add AI response to chat history
+    conversation_history.append({
+        "role": "jarvis",
+        "message": ai_response,
+        "timestamp": datetime.utcnow()
+    })
+    
+    # Update member document with new chat history
+    db.members.update_one(
+        {"_id": member_id},
+        {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
+    )
+    
     return {
         "success": True,
-        "message": ai_message
+        "response": ai_response,
+        "chat_history": conversation_history
     }
+
+@app.get("/debug/routes")
+def debug_routes():
+    return {"routes": ["health", "api/member/{id}", "api/team/{id}", "api/chat"]}
+
+from fastapi import Body
+
