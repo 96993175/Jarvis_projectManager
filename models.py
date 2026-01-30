@@ -1,14 +1,12 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any
-
+from typing import List, Union
 
 class Member(BaseModel):
     name: str
     email: str
     phone: str = ""
     role: str = "Team Member"
-    skills: list | str = []
-
+    skills: Union[str, List[str]] = ""
 
 class RegisterRequest(BaseModel):
     team_name: str
