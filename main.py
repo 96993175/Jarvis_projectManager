@@ -29,6 +29,9 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
+@app.options("/{path:path}")
+def options_handler(path: str):
+    return {}
 
 # 🔹 Timer endpoints
 @app.post("/api/timer/start")
@@ -229,6 +232,7 @@ Guidelines:
 - Keep it short, warm, and confident
 - Do NOT mention IDs or technical terms
 """
+    from groq import Groq
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
     # 🔹 GROQ AI CALL
