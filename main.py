@@ -130,7 +130,7 @@ def register(req: RegisterRequest):
 
 
     # 8️⃣ Start timer
-    start_desktop_timer(req.duration_hours)
+    #start_desktop_timer(req.duration_hours)
 
     # 9️⃣ Activate Jarvis Orb via command file
     import os
