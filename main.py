@@ -216,6 +216,7 @@ Create a warm, motivating welcome message that:
 - Avoids generic phrases
 """
 
+
     else:
         # Regular chat prompt with memory
         recent_history = conversation_history[-5:]  # Last 5 messages for context
