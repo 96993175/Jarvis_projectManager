@@ -5,8 +5,9 @@ from typing import List, Dict, Any
 class Member(BaseModel):
     name: str
     email: str
-    role: str
-    skills: List[str]
+    phone: str = ""
+    role: str = "Team Member"
+    skills: str = ""
 
 
 class RegisterRequest(BaseModel):

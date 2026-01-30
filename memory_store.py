@@ -33,7 +33,7 @@ def save_memory(team_name: str, mem_type: str, data: dict):
             "profile": {
                 "name": data.get("name", ""),
                 "role": data.get("role", "Team Member"),
-                "skills": data.get("skills", []),
+                "skills": data.get("skills", "").split(",") if data.get("skills") else [],
                 "email": data.get("email", ""),
                 "phone": data.get("phone", "")
             },
