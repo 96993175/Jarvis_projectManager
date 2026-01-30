@@ -18,8 +18,8 @@ app = FastAPI()
 # ✅ CORS Configuration for Render Deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Allow all origins for production
-    allow_credentials=True,
+    allow_origins=["*"],  # allow ALL origins for hackathon
+    allow_credentials=False,  # IMPORTANT: must be False with "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -28,6 +28,10 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.options("/{path:path}")
+def options_handler(path: str):
+    return {}
 
 # 🔹 Timer endpoints
 @app.post("/api/timer/start")
