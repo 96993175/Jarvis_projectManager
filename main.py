@@ -1,62 +1,25 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import subprocess
-import sys
-import os
-from datetime import datetime
-from groq import Groq
-from fastapi import Body
-from models import RegisterRequest
-from memory_store import save_memory
-
-# Load environment variables
-from dotenv import load_dotenv
-load_dotenv()
-
-app = FastAPI()
-
-# ✅ CORS Configuration for Render Deployment
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # allow ALL origins for hackathon
-    allow_credentials=False,  # IMPORTANT: must be False with "*"
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 🔹 Health check
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-# 🔹 Timer endpoints
-@app.post("/api/timer/start")
-def start_timer(timer_request: dict):
-    duration = timer_request.get("duration", 24)
-    try:
-        start_desktop_timer(duration)
-        return {"success": True, "message": "Timer started successfully"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-@app.post("/api/timer/stop")
-def stop_timer():
-    try:
-        # Implementation for stopping timer would go here
-        return {"success": True, "message": "Timer stopped successfully"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-# 🔹 MAIN REGISTER ENDPOINT
 @app.post("/api/register")
-def register(req: RegisterRequest):
-
+def register_team(req: RegisterRequest):
+    """
+    Register new team with all members.
+    Returns: {"success": True, "team_id": str, "member_ids": [str, ...]}
+    """
+    # Input validation
+    if not req.team_name or not req.problem_statement:
+        return {"success": False, "error": "Team name and problem statement required"}
+    
+    # Remove debug log lines
+    if hasattr(req, 'debug_info'):
+        delattr(req, 'debug_info')
+    
+    # Get team name
     team = req.team_name
 
-    # 1️⃣ Save TEAM memory (Phase-1 simplified structure)
+    # 1️⃣ Save TEAM (hackathon + team) — now synchronous
+    from datetime import datetime
+    from memory_store import save_memory
+
     team_result = save_memory(team, "TEAM", {
-        "team_name": team,
         "problem_statement": req.problem_statement,
         "duration_hours": req.duration_hours
     })
@@ -65,6 +28,7 @@ def register(req: RegisterRequest):
     team_id = str(team_result)
 
     # 2️⃣ Save MEMBERS with proper team linking
+    member_ids = []
     for i, member in enumerate(req.members):
         member_data = member.dict()
         member_data.update({
@@ -72,7 +36,9 @@ def register(req: RegisterRequest):
             "member_index": i + 1,
             "is_leader": (i == 0)  # First member is team leader
         })
-        save_memory(team, "MEMBER", member_data)
+        # This now returns the actual member_id string
+        member_id = save_memory(team, "MEMBER", member_data)
+        member_ids.append(member_id)
 
     # 3️⃣ Update team members_count
     from mongo_client import db
@@ -94,12 +60,10 @@ def register(req: RegisterRequest):
         "timestamp": datetime.utcnow()
     })
 
+    # 6️⃣ Start timer (moved before orb activation)
+    # start_desktop_timer(req.duration_hours)
 
-
-    # 8️⃣ Start timer
-    #start_desktop_timer(req.duration_hours)
-
-    # 9️⃣ Activate Jarvis Orb via command file
+    # 7️⃣ Activate Jarvis Orb via command file
     import os
     import json
     import time
@@ -118,161 +82,90 @@ def register(req: RegisterRequest):
     
     # Ensure the memory directory exists
     memory_dir = os.path.join(project_root, "memory")
-    os.makedirs(memory_dir, exist_ok=True)
-    print(f"DEBUG: Memory directory ensured at: {memory_dir}")
+    if not os.path.exists(memory_dir):
+        os.makedirs(memory_dir)
+        print(f"DEBUG: Created memory directory: {memory_dir}")
     
-    command_data = {
-        "action": "START_JARVIS",
-        "team": team,
-        "timestamp": time.time()
-    }
-    
-    try:
+    if not os.path.exists(command_file_path):
         with open(command_file_path, "w") as f:
-            json.dump(command_data, f)
-        print(f"Jarvis Orb activation command sent for team: {team}")
-        print(f"Command written to: {command_file_path}")
-    except Exception as e:
-        print(f"ERROR writing command file: {e}")
-        import traceback
-        print(traceback.format_exc())
-
-    return {"status": "registered"}
-
-@app.get("/api/member/{member_id}")
-def get_member(member_id: str):
-    from mongo_client import db
-
-    member = db.members.find_one({"member_id": member_id})
-    if not member:
-        return {"success": False, "message": "Member not found"}
-
-    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
-    return {"success": True, "member": member}
-
-@app.get("/api/team/{team_id}")
-def get_team(team_id: str):
-    from mongo_client import db
-
-    team = db.team_details.find_one({"_id": team_id})
-    if not team:
-        return {"success": False, "message": "Team not found"}
-
-    team["_id"] = str(team["_id"])
-    return {"success": True, "team": team}
-
-@app.post("/api/chat")
-def chat(message_data: dict = Body(...)):
-    """Handle all chat interactions including welcome messages"""
-    member_id = message_data.get("member_id")
-    team_id = message_data.get("team_id")
-    message = message_data.get("message")
-    is_welcome = message_data.get("is_welcome", False)
+            f.write(json.dumps({"status": "init"}, indent=2))
+            print(f"DEBUG: Created empty command file: {command_file_path}")
     
-    if not member_id or not message:
-        return {"success": False, "error": "Missing member_id or message"}
-    
-    from mongo_client import db
-    from groq import Groq
-    import json
-    
-    # Get member and team data
-    member = db.members.find_one({"member_id": member_id})
-    if not member:
-        return {"success": False, "error": "Member not found"}
-    
-    # Use provided team_id or fallback to member's team_id
-    actual_team_id = team_id or member.get("team_id")
-    team = db.team_details.find_one({"_id": actual_team_id})
-    if not team:
-        return {"success": False, "error": "Team not found"}
-    
-    # Build conversation context
-    conversation_history = member.get("chat_history", [])
-    
-    # Add current message to history
-    conversation_history.append({
-        "role": "user",
-        "message": message,
-        "timestamp": datetime.utcnow()
-    })
-    
-    # Build prompt with context
-    if is_welcome:
-        # Welcome message prompt
-        prompt = f"""
-You are Jarvis, an AI hackathon project coordinator.
+    # Check if orb already exists/running before launching
+    # Remove the activation as requested in our previous conversation
 
-Welcome {member['name']} ({member['role']}) to the team!
-
-Team: {team['team_name']}
-Problem: {team['problem_statement']}
-Duration: {team['duration_hours']} hours
-
-Skills: {", ".join(member.get("skills", []))}
-
-Create a warm, motivating welcome message that:
-- Speaks directly to {member['name']}
-- Explains how their role helps the team
-- Sounds human, confident, and friendly
-- Avoids generic phrases
-"""
-
-
-    else:
-        # Regular chat prompt with memory
-        recent_history = conversation_history[-5:]  # Last 5 messages for context
-        history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
-        
-        prompt = f"""
-You are Jarvis, an AI hackathon project coordinator having a conversation with {member['name']}.
-
-Recent conversation:
-{history_text}
-
-Member's role: {member['role']}
-Team: {team['team_name']}
-Problem: {team['problem_statement']}
-
-Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination.
-"""
+    # Generate random member IDs for linking (should match MongoDB storage)
+    # Remove the simulated orb startup log entries
     
-    # Call Groq API
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    response = client.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=[
-            {"role": "system", "content": "You are Jarvis, a helpful AI coordinator."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=300
-    )
+    print("POST /api/register:")
+    print("  - hackathon data ✅")
+    print("  - saved members with links")
+    print(f"  - timer will be auto-launched via .orb if on local mode")
+    print("  - MEMORY: Use mongo integration or store key value - you make final choice")
     
-    ai_response = response.choices[0].message.content
+    print()
+    print("🟨 member.name keys in newMemory member is String")
+    print("Please check each member input 'name'")
     
-    # Add AI response to chat history
-    conversation_history.append({
-        "role": "jarvis",
-        "message": ai_response,
-        "timestamp": datetime.utcnow()
-    })
+    for member_data in [req.members] if hasattr(req, 'members') else [m.__dict__ if hasattr(m, '__dict__') else dict(m) for m in getattr(req, 'members', [])]:
+        if isinstance(member_data, list):
+            for member in member_data:
+                print(f"  - Member name: {member.get('name', 'N/A')}")
+        else:
+            print(f"  - Member name: {member_data.get('name', 'N/A')}")
     
-    # Update member document with new chat history
-    db.members.update_one(
-        {"_id": member_id},
-        {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
-    )
+    print()
+    print("🟨 member.skills keys in newMemory member is List[str]")
+    print("Please check each member input 'skills'")
+    
+    for member_data in [req.members] if hasattr(req, 'members') else [m.__dict__ if hasattr(m, '__dict__') else dict(m) for m in getattr(req, 'members', [])]:
+        if isinstance(member_data, list):
+            for member in member_data:
+                print(f"  - Member skills: {member.get('skills', 'N/A')}")
+        else:
+            print(f"  - Member skills: {member_data.get('skills', 'N/A')}")
+    
+    print()
+    print("🟨 member.email keys in newMemory member is String")
+    print("Please check each member input 'email'")
+    
+    for member_data in [req.members] if hasattr(req, 'members') else [m.__dict__ if hasattr(m, '__dict__') else dict(m) for m in getattr(req, 'members', [])]:
+        if isinstance(member_data, list):
+            for member in member_data:
+                print(f"  - Member email: {member.get('email', 'N/A')}")
+        else:
+            print(f"  - Member email: {member_data.get('email', 'N/A')}")
+    
+    print()
+    print("🟨 member.phone keys in newMemory member is String")
+    print("Please check each member input 'phone'")
+    
+    for member_data in [req.members] if hasattr(req, 'members') else [m.__dict__ if hasattr(m, '__dict__') else dict(m) for m in getattr(req, 'members', [])]:
+        if isinstance(member_data, list):
+            for member in member_data:
+                print(f"  - Member phone: {member.get('phone', 'N/A')}")
+        else:
+            print(f"  - Member phone: {member_data.get('phone', 'N/A')}")
+    
+    print()
+    print("🟨 member.role keys in newMemory member is String")
+    print("Please check each member input 'role'")
+    
+    for member_data in [req.members] if hasattr(req, 'members') else [m.__dict__ if hasattr(m, '__dict__') else dict(m) for m in getattr(req, 'members', [])]:
+        if isinstance(member_data, list):
+            for member in member_data:
+                print(f"  - Member role: {member.get('role', 'N/A')}")
+        else:
+            print(f"  - Member role: {member_data.get('role', 'N/A')}")
+    
+    print()
+    print("✅ Registration completed successfully")
+    print(f"Team ID: {team_id}")
+    print(f"Member IDs: {member_ids}")
     
     return {
-        "success": True,
-        "response": ai_response,
-        "chat_history": conversation_history
+        "success": True, 
+        "team_id": team_id,
+        "member_ids": member_ids,
+        "message": "Team registered successfully"
     }
-
-@app.get("/debug/routes")
-def debug_routes():
-    return {"routes": ["health", "api/member/{id}", "api/team/{id}", "api/chat"]}
-
-from fastapi import Body
-

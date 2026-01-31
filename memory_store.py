@@ -49,7 +49,8 @@ def save_memory(team_name: str, mem_type: str, data: dict):
             "last_active_at": datetime.utcnow()
         }
         result = collection.insert_one(member_doc)
-        return result.inserted_id
+        # Return the member_id string instead of the MongoDB ObjectId
+        return member_id
         
     else:
         # For other memory types, use a simple generic collection
