@@ -69,6 +69,7 @@ def register(req: RegisterRequest):
         member_data = member.dict()
         member_data.update({
             "team_id": team_id,
+            "team_name": team,  # Pass team name for member document
             "member_index": i + 1,
             "is_leader": (i == 0)  # First member is team leader
         })
@@ -96,10 +97,21 @@ def register(req: RegisterRequest):
 
 
 
-    # 8️⃣ Start timer
+    # 6️⃣ Fetch all member tokens for return
+    from mongo_client import db
+    members_with_tokens = list(db.members.find({"team_id": team_id}, {"chat_token": 1, "name": 1, "role": 1}))
+    member_links_data = []
+    for member in members_with_tokens:
+        member_links_data.append({
+            "chat_token": member.get("chat_token"),
+            "name": member.get("name"),
+            "role": member.get("role")
+        })
+
+    # 7️⃣ Start timer
     #start_desktop_timer(req.duration_hours)
 
-    # 9️⃣ Activate Jarvis Orb via command file
+    # 8️⃣ Activate Jarvis Orb via command file
     import os
     import json
     import time
@@ -137,8 +149,9 @@ def register(req: RegisterRequest):
         import traceback
         print(traceback.format_exc())
 
-    return {"status": "registered"}
+    return {"status": "registered", "members": member_links_data}
 
+# Keep original member endpoint for backward compatibility
 @app.get("/api/member/{member_id}")
 def get_member(member_id: str):
     from mongo_client import db
@@ -149,6 +162,20 @@ def get_member(member_id: str):
 
     member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
     return {"success": True, "member": member}
+
+
+# New token-based member endpoint
+@app.get("/api/member/token/{token}")
+def get_member_by_token(token: str):
+    from mongo_client import db
+
+    member = db.members.find_one({"chat_token": token})
+    if not member:
+        return {"success": False, "message": "Member not found"}
+
+    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
+    return {"success": True, "member": member}
+
 
 @app.get("/api/team/{team_id}")
 def get_team(team_id: str):
@@ -161,29 +188,28 @@ def get_team(team_id: str):
     team["_id"] = str(team["_id"])
     return {"success": True, "team": team}
 
+
 @app.post("/api/chat")
 def chat(message_data: dict = Body(...)):
     """Handle all chat interactions including welcome messages"""
-    member_id = message_data.get("member_id")
-    team_id = message_data.get("team_id")
+    token = message_data.get("token")
     message = message_data.get("message")
     is_welcome = message_data.get("is_welcome", False)
     
-    if not member_id or not message:
-        return {"success": False, "error": "Missing member_id or message"}
+    if not token or not message:
+        return {"success": False, "error": "Missing token or message"}
     
     from mongo_client import db
     from groq import Groq
     import json
     
-    # Get member and team data
-    member = db.members.find_one({"member_id": member_id})
+    # Get member using token instead of member_id
+    member = db.members.find_one({"chat_token": token})
     if not member:
-        return {"success": False, "error": "Member not found"}
+        return {"success": False, "error": "Member not found or invalid token"}
     
-    # Use provided team_id or fallback to member's team_id
-    actual_team_id = team_id or member.get("team_id")
-    team = db.team_details.find_one({"_id": actual_team_id})
+    # Get team data using member's team_id
+    team = db.team_details.find_one({"_id": member.get("team_id")})
     if not team:
         return {"success": False, "error": "Team not found"}
     
@@ -260,7 +286,7 @@ Respond naturally as a helpful AI assistant. Be conversational, remember context
     
     # Update member document with new chat history
     db.members.update_one(
-        {"_id": member_id},
+        {"_id": member["_id"]},
         {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
     )
     
@@ -272,7 +298,7 @@ Respond naturally as a helpful AI assistant. Be conversational, remember context
 
 @app.get("/debug/routes")
 def debug_routes():
-    return {"routes": ["health", "api/member/{id}", "api/team/{id}", "api/chat"]}
+    return {"routes": ["health", "api/member/{id}", "api/member/token/{token}", "api/team/{id}", "api/chat"]}
 
 from fastapi import Body
 
