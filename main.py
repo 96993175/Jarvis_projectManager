@@ -115,11 +115,11 @@ def chat_init(token: str):
 
 # 🔹 CHAT MESSAGE ENDPOINT
 @app.post("/api/chat")
-def chat(data: dict = Body(...)):
+def chat(message_data: dict = Body(...)):
     """Handle all chat interactions including welcome messages"""
-    token = data.get("token")
-    message = data.get("message")
-    is_welcome = data.get("is_welcome", False)
+    token = message_data.get("token")
+    message = message_data.get("message")
+    is_welcome = message_data.get("is_welcome", False)
     
     if not token or not message:
         return {"success": False, "error": "Missing token or message"}
@@ -128,10 +128,10 @@ def chat(data: dict = Body(...)):
     from groq import Groq
     import json
     
-    # Get member using token - NO MORE member_id
+    # Get member using token
     member = db.members.find_one({"token": token})
     if not member:
-        return {"success": False, "error": "Invalid chat link"}
+        return {"success": False, "error": "Member not found or invalid token"}
     
     # Get team data
     team = db.teams.find_one({"_id": member["team_id"]})
