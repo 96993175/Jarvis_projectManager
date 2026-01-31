@@ -24,29 +24,16 @@ def save_memory(team_name: str, mem_type: str, data: dict):
         
     elif mem_type.upper() == "MEMBER":
         collection = db["members"]
-        # Create member document with simplified schema
-        member_id = f"MEM_{str(uuid.uuid4().hex[:4]).upper()}"
+        # Create member document with flat schema
+        from bson import ObjectId
         member_doc = {
-            "_id": member_id,  # MongoDB ObjectId
-            "member_id": member_id,  # String ID for frontend lookup
+            "_id": str(ObjectId()),
             "team_id": data.get("team_id", "TEAM_UNKNOWN"),
-            "member_index": data.get("member_index", 1),
-            "is_leader": data.get("is_leader", False),
-            "profile": {
-                "name": data.get("name", ""),
-                "role": data.get("role", "Team Member"),
-                "skills": data.get("skills", []),
-                "email": data.get("email", ""),
-                "phone": data.get("phone", "")
-            },
+            "name": data.get("name", ""),
+            "role": data.get("role", "Team Member"),
+            "skills": data.get("skills", []),
             "chat_history": [],
-            "memory": {
-                "current_task": "",
-                "confidence_score": 0.0,
-                "last_summary": ""
-            },
-            "created_at": datetime.utcnow(),
-            "last_active_at": datetime.utcnow()
+            "created_at": datetime.utcnow()
         }
         result = collection.insert_one(member_doc)
         return result.inserted_id

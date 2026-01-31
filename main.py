@@ -5,6 +5,7 @@ import sys
 import os
 from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from bson import ObjectId
 from groq import Groq
 from fastapi import Body
 from models import RegisterRequest
@@ -65,15 +66,20 @@ def register(req: RegisterRequest):
     # Get the generated team ID
     team_id = str(team_result)
 
-    # 2️⃣ Save MEMBERS with proper team linking
+    # 2️⃣ Save MEMBERS with proper team linking (direct insert)
     for i, member in enumerate(req.members):
-        member_data = member.dict()
-        member_data.update({
+        member_doc = {
+            "_id": str(ObjectId()),
             "team_id": team_id,
-            "member_index": i + 1,
-            "is_leader": (i == 0)  # First member is team leader
-        })
-        save_memory(team, "MEMBER", member_data)
+            "name": member.name,
+            "role": member.role,
+            "skills": member.skills,
+            "is_leader": i == 0,
+            "chat_history": [],
+            "created_at": datetime.utcnow()
+        }
+        
+        db.members.insert_one(member_doc)
 
     # 3️⃣ Update team members_count
     from mongo_client import db
@@ -144,12 +150,20 @@ def register(req: RegisterRequest):
 def get_member(member_id: str):
     from mongo_client import db
 
-    member = db.members.find_one({"member_id": member_id})
+    member = db.members.find_one({"_id": member_id})
     if not member:
         return {"success": False, "message": "Member not found"}
 
-    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
-    return {"success": True, "member": member}
+    return {
+        "success": True,
+        "member": {
+            "id": member["_id"],
+            "team_id": member["team_id"],
+            "name": member["name"],
+            "role": member["role"],
+            "skills": member.get("skills", [])
+        }
+    }
 
 @app.get("/api/team/{team_id}")
 def get_team(team_id: str):
