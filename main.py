@@ -70,28 +70,33 @@ def chat_init(token: str):
     """Initialize chat session - get member and team data"""
     from mongo_client import db
 
-    # Get member using token
-    member = db.members.find_one({"token": token})
-    if not member:
-        return {"success": False, "error": "Member not found or invalid token"}
+    try:
+        # Get member using token
+        member = db.members.find_one({"token": token})
+        if not member:
+            return {"success": False, "error": "Member not found or invalid token"}
 
-    # Get team data using team_name
-    team = db.teams.find_one({"team_name": member["team_name"]})
-    if not team:
-        return {"success": False, "error": "Team not found"}
+        # Get team data using team_name
+        team = db.teams.find_one({"team_name": member["team_name"]})
+        if not team:
+            return {"success": False, "error": "Team not found"}
 
-    return {
-        "success": True,
-        "member": {
-            "name": member["name"],
-            "role": member["role"]
-        },
-        "team": {
-            "team_name": team["team_name"],
-            "problem_statement": team["problem_statement"]
-        },
-        "chat_history": member.get("chat_history", [])
-    }
+        return {
+            "success": True,
+            "member": {
+                "name": member.get("name", ""),
+                "role": member.get("role", "")
+            },
+            "team": {
+                "team_name": team.get("team_name", ""),
+                "problem_statement": team.get("problem_statement", "")
+            },
+            "chat_history": member.get("chat_history", [])
+        }
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in chat init endpoint: {str(e)}")
+        return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 # 🔹 CHAT MESSAGE ENDPOINT
 @app.post("/api/chat")
@@ -108,97 +113,102 @@ def chat(message_data: dict = Body(...)):
     from groq import Groq
     import json
     
-    # Get member using token
-    member = db.members.find_one({"token": token})
-    if not member:
-        return {"success": False, "error": "Member not found or invalid token"}
-    
-    # Get team data using team_name
-    team = db.teams.find_one({"team_name": member["team_name"]})
-    if not team:
-        return {"success": False, "error": "Team not found"}
-    
-    # Build conversation context
-    conversation_history = member.get("chat_history", [])
-    
-    # Add current message to history
-    conversation_history.append({
-        "role": "user",
-        "message": message,
-        "timestamp": datetime.utcnow()
-    })
-    
-    # Build prompt with context
-    if is_welcome:
-        # Welcome message prompt
-        prompt = f"""
+    try:
+        # Get member using token
+        member = db.members.find_one({"token": token})
+        if not member:
+            return {"success": False, "error": "Member not found or invalid token"}
+
+        # Get team data using team_name
+        team = db.teams.find_one({"team_name": member["team_name"]})
+        if not team:
+            return {"success": False, "error": "Team not found"}
+
+        # Build conversation context
+        conversation_history = member.get("chat_history", [])
+        
+        # Add current message to history
+        conversation_history.append({
+            "role": "user",
+            "message": message,
+            "timestamp": datetime.utcnow()
+        })
+        
+        # Build prompt with context
+        if is_welcome:
+            # Welcome message prompt
+            prompt = f"""
 You are Jarvis, an AI hackathon project coordinator.
 
-Welcome {member['name']} ({member['role']}) to the team!
+Welcome {member.get('name', 'Team Member')} ({member.get('role', 'Team Member')}) to the team!
 
 Team: {team['team_name']}
 Problem: {team['problem_statement']}
-Duration: {team['hackathon']['duration_hours']} hours
+Duration: {team.get('hackathon', {}).get('duration_hours', 24)} hours
 
 Skills: {", ".join(member.get("skills", []))}
 
 Create a warm, motivating welcome message that:
-- Speaks directly to {member['name']}
+- Speaks directly to {member.get('name', 'Team Member')}
 - Explains how their role helps the team
 - Sounds human, confident, and friendly
 - Avoids generic phrases
 """
 
-    else:
-        # Regular chat prompt with memory
-        recent_history = conversation_history[-5:]  # Last 5 messages for context
-        history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
-        
-        prompt = f"""
-You are Jarvis, an AI hackathon project coordinator having a conversation with {member['name']}.
+        else:
+            # Regular chat prompt with memory
+            recent_history = conversation_history[-5:]  # Last 5 messages for context
+            history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
+            
+            prompt = f"""
+You are Jarvis, an AI hackathon project coordinator having a conversation with {member.get('name', 'Team Member')}.
 
 Recent conversation:
 {history_text}
 
-Member's role: {member['role']}
+Member's role: {member.get('role', 'Team Member')}
 Team: {team['team_name']}
 Problem: {team['problem_statement']}
 
 Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination.
 """
-    
-    # Call Groq API
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    response = client.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=[
-            {"role": "system", "content": "You are Jarvis, a helpful AI coordinator."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=300
-    )
-    
-    ai_response = response.choices[0].message.content
-    
-    # Add AI response to chat history
-    conversation_history.append({
-        "role": "jarvis",
-        "message": ai_response,
-        "timestamp": datetime.utcnow()
-    })
-    
-    # Update member document with new chat history
-    db.members.update_one(
-        {"token": token},
-        {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
-    )
-    
-    return {
-        "success": True,
-        "response": ai_response,
-        "chat_history": conversation_history
-    }
+        
+        # Call Groq API
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "You are Jarvis, a helpful AI coordinator."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        
+        ai_response = response.choices[0].message.content
+        
+        # Add AI response to chat history
+        conversation_history.append({
+            "role": "jarvis",
+            "message": ai_response,
+            "timestamp": datetime.utcnow()
+        })
+        
+        # Update member document with new chat history
+        db.members.update_one(
+            {"token": token},
+            {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
+        )
+        
+        return {
+            "success": True,
+            "response": ai_response,
+            "chat_history": conversation_history
+        }
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in chat endpoint: {str(e)}")
+        return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 @app.get("/debug/routes")
 def debug_routes():
