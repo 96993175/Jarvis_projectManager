@@ -1,3 +1,35 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import subprocess
+import sys
+import os
+from datetime import datetime
+from groq import Groq
+from fastapi import Body
+from models import RegisterRequest
+from memory_store import save_memory
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Initialize FastAPI app
+app = FastAPI(title="Jarvis Hackathon API", version="1.0.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
 @app.post("/api/register")
 def register_team(req: RegisterRequest):
     """
@@ -169,3 +201,142 @@ def register_team(req: RegisterRequest):
         "member_ids": member_ids,
         "message": "Team registered successfully"
     }
+
+# Add the rest of your existing endpoints here...
+# I'll need to add them back from your original file
+
+@app.get("/api/member/{member_id}")
+def get_member(member_id: str):
+    from mongo_client import db
+
+    member = db.members.find_one({"member_id": member_id})
+    if not member:
+        return {"success": False, "message": "Member not found"}
+
+    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
+    return {"success": True, "member": member}
+
+@app.get("/api/team/{team_id}")
+def get_team(team_id: str):
+    from mongo_client import db
+
+    team = db.team_details.find_one({"_id": team_id})
+    if not team:
+        return {"success": False, "message": "Team not found"}
+
+    team["_id"] = str(team["_id"])  # Convert ObjectId to string for JSON
+    return {"success": True, "team": team}
+
+@app.post("/api/chat")
+def chat(message_data: dict = Body(...)):
+    """Handle all chat interactions including welcome messages"""
+    from mongo_client import db
+    import json
+    
+    member_id = message_data.get("member_id")
+    user_message = message_data.get("message", "")
+    is_welcome = message_data.get("is_welcome", False)
+    
+    if not member_id:
+        return {"success": False, "error": "member_id required"}
+    
+    # Get member and team data
+    member = db.members.find_one({"member_id": member_id})
+    if not member:
+        return {"success": False, "error": "Member not found"}
+    
+    team = db.team_details.find_one({"_id": member["team_id"]})
+    if not team:
+        return {"success": False, "error": "Team not found"}
+    
+    # Get conversation history
+    conversation_history = member.get("chat_history", [])
+    
+    # Add user message to history (except for welcome messages)
+    if not is_welcome and user_message:
+        conversation_history.append({
+            "role": "user",
+            "message": user_message,
+            "timestamp": datetime.utcnow()
+        })
+    
+    # Prepare prompt for AI
+    if is_welcome:
+        # Welcome message prompt
+        prompt = f"""
+You are Jarvis, an AI hackathon project coordinator.
+
+Welcome {member['profile']['name']} ({member['profile']['role']}) to the team!
+
+Team: {team['team_name']}
+Problem: {team['problem_statement']}
+Duration: {team['hackathon']['duration_hours']} hours
+
+Skills: {", ".join(member.get('profile', {}).get('skills', []))}
+
+Create a warm, motivating welcome message that:
+- Speaks directly to {member['profile']['name']}
+- Explains how their role helps the team
+- Sounds human, confident, and friendly
+- Avoids generic phrases
+"""
+    else:
+        # Regular chat prompt with memory
+        recent_history = conversation_history[-5:]  # Last 5 messages for context
+        history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
+        
+        prompt = f"""
+You are Jarvis, an AI hackathon project coordinator having a conversation with {member['profile']['name']}.
+
+Recent conversation:
+{history_text}
+
+Member's role: {member['profile']['role']}
+Team: {team['team_name']}
+Problem: {team['problem_statement']}
+
+Respond naturally to their message while being helpful and encouraging.
+"""
+    
+    # Call Groq API
+    try:
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        completion = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are Jarvis, a helpful AI assistant for hackathon teams."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=500,
+        )
+        
+        ai_response = completion.choices[0].message.content
+        
+        # Add AI response to conversation history
+        if ai_response:
+            conversation_history.append({
+                "role": "assistant",
+                "message": ai_response,
+                "timestamp": datetime.utcnow()
+            })
+            
+            # Update MongoDB with new conversation history
+            db.members.update_one(
+                {"member_id": member_id},
+                {"$set": {"chat_history": conversation_history}}
+            )
+        
+        return {"success": True, "response": ai_response}
+        
+    except Exception as e:
+        print(f"Groq API error: {e}")
+        return {"success": False, "error": "AI service unavailable"}
+
+@app.get("/debug/routes")
+def debug_routes():
+    return {"routes": ["health", "api/member/{id}", "api/team/{id}", "api/chat"]}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
