@@ -150,9 +150,9 @@ Skills: {", ".join(member.get("skills", []))}
 
 Create a warm, motivating welcome message that:
 - Speaks directly to {member.get('name', 'Team Member')}
-- Explains how their role helps the team
 - Sounds human, confident, and friendly
 - Avoids generic phrases
+- Makes the message of max 50 words
 """
 
         else:
@@ -170,7 +170,7 @@ Member's role: {member.get('role', 'Team Member')}
 Team: {team['team_name']}
 Problem: {team['problem_statement']}
 
-Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination.
+Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination in max 50 words (IMP - GIVE DONT GIVE TEAM INFO OR MEMBER INFO UNTIL ASKED JUST ANSWER THE QUESTION USING THE DATA GIVEN).
 """
         
         # Call Groq API
