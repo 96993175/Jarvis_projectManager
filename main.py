@@ -94,6 +94,16 @@ def chat_init(token: str):
     }
 
 # 🔹 CHAT MESSAGE ENDPOINT
+@app.options("/api/chat")
+def chat_options():
+    from fastapi.responses import Response
+    response = Response()
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+
 @app.post("/api/chat")
 def chat(message_data: dict = Body(...)):
     """Handle all chat interactions including welcome messages"""
