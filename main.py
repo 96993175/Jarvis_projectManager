@@ -29,25 +29,6 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
-
-# 🔹 Timer endpoints
-@app.post("/api/timer/start")
-def start_timer(timer_request: dict):
-    duration = timer_request.get("duration", 24)
-    try:
-        start_desktop_timer(duration)
-        return {"success": True, "message": "Timer started successfully"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-@app.post("/api/timer/stop")
-def stop_timer():
-    try:
-        # Implementation for stopping timer would go here
-        return {"success": True, "message": "Timer stopped successfully"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
 # 🔹 MAIN REGISTER ENDPOINT
 @app.post("/api/register")
 def register(req: RegisterRequest):
@@ -60,16 +41,12 @@ def register(req: RegisterRequest):
         "problem_statement": req.problem_statement,
         "duration_hours": req.duration_hours
     })
-    
-    # Get the generated team ID
-    team_id = team_result
 
-    # 2️⃣ Save MEMBERS with proper team linking
+    # 2️⃣ Save MEMBERS with team_name reference
     member_tokens = []
     for i, member in enumerate(req.members):
         member_data = member.dict()
         member_data.update({
-            "team_id": team_id,
             "member_index": i + 1,
             "is_leader": (i == 0)  # First member is team leader
         })
@@ -93,25 +70,27 @@ def chat_init(token: str):
     """Initialize chat session - get member and team data"""
     from mongo_client import db
 
-
     # Get member using token
     member = db.members.find_one({"token": token})
     if not member:
         return {"success": False, "error": "Member not found or invalid token"}
 
-    # Get team data
-    team = db.teams.find_one({"_id": member["team_id"]})
+    # Get team data using team_name
+    team = db.teams.find_one({"team_name": member["team_name"]})
     if not team:
         return {"success": False, "error": "Team not found"}
 
-    # Convert ObjectId to string for JSON serialization
-    member["_id"] = str(member["_id"])
-    team["_id"] = str(team["_id"])
-
     return {
         "success": True,
-        "member": member,
-        "team": team
+        "member": {
+            "name": member["name"],
+            "role": member["role"]
+        },
+        "team": {
+            "team_name": team["team_name"],
+            "problem_statement": team["problem_statement"]
+        },
+        "chat_history": member.get("chat_history", [])
     }
 
 # 🔹 CHAT MESSAGE ENDPOINT
@@ -134,8 +113,8 @@ def chat(message_data: dict = Body(...)):
     if not member:
         return {"success": False, "error": "Member not found or invalid token"}
     
-    # Get team data
-    team = db.teams.find_one({"_id": member["team_id"]})
+    # Get team data using team_name
+    team = db.teams.find_one({"team_name": member["team_name"]})
     if not team:
         return {"success": False, "error": "Team not found"}
     
@@ -159,7 +138,7 @@ Welcome {member['name']} ({member['role']}) to the team!
 
 Team: {team['team_name']}
 Problem: {team['problem_statement']}
-Duration: {team['duration_hours']} hours
+Duration: {team['hackathon']['duration_hours']} hours
 
 Skills: {", ".join(member.get("skills", []))}
 
@@ -211,8 +190,8 @@ Respond naturally as a helpful AI assistant. Be conversational, remember context
     
     # Update member document with new chat history
     db.members.update_one(
-        {"_id": member["_id"]},
-        {"$set": {"chat_history": conversation_history}}
+        {"token": token},
+        {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
     )
     
     return {
@@ -224,5 +203,3 @@ Respond naturally as a helpful AI assistant. Be conversational, remember context
 @app.get("/debug/routes")
 def debug_routes():
     return {"routes": ["health", "api/register", "api/chat/init", "api/chat"]}
-
-from fastapi import Body
