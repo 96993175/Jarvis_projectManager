@@ -1,304 +1,127 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess
-import sys
-import os
 from datetime import datetime
+import os
 from groq import Groq
-from fastapi import Body
-from models import RegisterRequest
 from memory_store import save_memory
-
-# Load environment variables
 from dotenv import load_dotenv
+
+# Load environment
 load_dotenv()
 
 app = FastAPI()
 
-# ✅ CORS Configuration for Render Deployment
+# CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # allow ALL origins for hackathon
-    allow_credentials=False,  # IMPORTANT: must be False with "*"
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 🔹 Health check
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
-# 🔹 Timer endpoints
-@app.post("/api/timer/start")
-def start_timer(timer_request: dict):
-    duration = timer_request.get("duration", 24)
-    try:
-        start_desktop_timer(duration)
-        return {"success": True, "message": "Timer started successfully"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-@app.post("/api/timer/stop")
-def stop_timer():
-    try:
-        # Implementation for stopping timer would go here
-        return {"success": True, "message": "Timer stopped successfully"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-# 🔹 MAIN REGISTER ENDPOINT
+# MINIMAL REGISTRATION
 @app.post("/api/register")
-def register(req: RegisterRequest):
-
-    team = req.team_name
-
-    # 1️⃣ Save TEAM memory (Phase-1 simplified structure)
-    team_result = save_memory(team, "TEAM", {
-        "team_name": team,
-        "problem_statement": req.problem_statement,
-        "duration_hours": req.duration_hours
+def register(data: dict = Body(...)):
+    """
+    Minimal registration:
+    - Create team
+    - Create members with tokens
+    - Return member tokens
+    """
+    # Create team
+    team_id = save_memory(data["team_name"], "TEAM", {
+        "problem_statement": data["problem_statement"],
+        "duration_hours": data["duration_hours"]
     })
     
-    # Get the generated team ID
-    team_id = str(team_result)
-
-    # 2️⃣ Save MEMBERS with proper team linking
-    for i, member in enumerate(req.members):
-        member_data = member.dict()
-        member_data.update({
+    # Create members
+    member_tokens = []
+    for member_data in data["members"]:
+        token = save_memory(data["team_name"], "MEMBER", {
             "team_id": team_id,
-            "team_name": team,  # Pass team name for member document
-            "member_index": i + 1,
-            "is_leader": (i == 0)  # First member is team leader
+            "name": member_data["name"],
+            "role": member_data["role"],
+            "skills": member_data["skills"]
         })
-        save_memory(team, "MEMBER", member_data)
-
-    # 3️⃣ Update team members_count
-    from mongo_client import db
-    db["team_details"].update_one(
-        {"_id": team_id},
-        {"$set": {"members_count": len(req.members)}}
-    )
-
-    # 4️⃣ Save EVENT for registration
-    save_memory(team, "EVENT", {
-        "event": "TEAM_REGISTERED",
-        "members_count": len(req.members)
-    })
-    
-    # 5️⃣ Save simple registration completion event
-    save_memory(team, "REGISTRATION_COMPLETE", {
-        "status": "success",
-        "message": "Team registration completed successfully",
-        "timestamp": datetime.utcnow()
-    })
-
-
-
-    # 6️⃣ Fetch all member tokens for return
-    from mongo_client import db
-    members_with_tokens = list(db.members.find({"team_id": team_id}, {"chat_token": 1, "name": 1, "role": 1}))
-    member_links_data = []
-    for member in members_with_tokens:
-        member_links_data.append({
-            "chat_token": member.get("chat_token"),
-            "name": member.get("name"),
-            "role": member.get("role")
+        member_tokens.append({
+            "name": member_data["name"],
+            "token": token
         })
-
-    # 7️⃣ Start timer
-    #start_desktop_timer(req.duration_hours)
-
-    # 8️⃣ Activate Jarvis Orb via command file
-    import os
-    import json
-    import time
     
-    # Get absolute paths
-    current_dir = os.path.abspath(os.path.dirname(__file__))
-    project_root = os.path.dirname(current_dir)
-    
-    print(f"DEBUG: Backend current directory: {current_dir}")
-    print(f"DEBUG: Project root: {project_root}")
-    
-    # Create command file to activate the orb
-    command_file_path = os.path.join(project_root, "memory", "commands.json")
-    
-    print(f"DEBUG: Attempting to create command file at: {command_file_path}")
-    
-    # Ensure the memory directory exists
-    memory_dir = os.path.join(project_root, "memory")
-    os.makedirs(memory_dir, exist_ok=True)
-    print(f"DEBUG: Memory directory ensured at: {memory_dir}")
-    
-    command_data = {
-        "action": "START_JARVIS",
-        "team": team,
-        "timestamp": time.time()
-    }
-    
-    try:
-        with open(command_file_path, "w") as f:
-            json.dump(command_data, f)
-        print(f"Jarvis Orb activation command sent for team: {team}")
-        print(f"Command written to: {command_file_path}")
-    except Exception as e:
-        print(f"ERROR writing command file: {e}")
-        import traceback
-        print(traceback.format_exc())
+    return {"status": "registered", "members": member_tokens}
 
-    return {"status": "registered", "members": member_links_data}
-
-# Keep original member endpoint for backward compatibility
-@app.get("/api/member/{member_id}")
-def get_member(member_id: str):
-    from mongo_client import db
-
-    member = db.members.find_one({"member_id": member_id})
-    if not member:
-        return {"success": False, "message": "Member not found"}
-
-    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
-    return {"success": True, "member": member}
-
-
-# New token-based member endpoint
-@app.get("/api/member/token/{token}")
-def get_member_by_token(token: str):
-    from mongo_client import db
-
-    member = db.members.find_one({"chat_token": token})
-    if not member:
-        return {"success": False, "message": "Member not found"}
-
-    member["_id"] = str(member["_id"])  # Convert ObjectId to string for JSON
-    return {"success": True, "member": member}
-
-
-@app.get("/api/team/{team_id}")
-def get_team(team_id: str):
-    from mongo_client import db
-
-    team = db.team_details.find_one({"_id": team_id})
-    if not team:
-        return {"success": False, "message": "Team not found"}
-
-    team["_id"] = str(team["_id"])
-    return {"success": True, "team": team}
-
-
+# MINIMAL CHAT
 @app.post("/api/chat")
-def chat(message_data: dict = Body(...)):
-    """Handle all chat interactions including welcome messages"""
-    token = message_data.get("token")
-    message = message_data.get("message")
-    is_welcome = message_data.get("is_welcome", False)
+def chat(data: dict = Body(...)):
+    """
+    Minimal chat:
+    - Token validation
+    - Groq AI response
+    - MongoDB storage
+    """
+    token = data.get("token")
+    message = data.get("message")
     
     if not token or not message:
         return {"success": False, "error": "Missing token or message"}
     
     from mongo_client import db
-    from groq import Groq
-    import json
     
-    # Get member using token instead of member_id
-    member = db.members.find_one({"chat_token": token})
+    # Validate token and get member
+    member = db.members.find_one({"token": token})
     if not member:
-        return {"success": False, "error": "Member not found or invalid token"}
+        return {"success": False, "error": "Invalid token"}
     
-    # Get team data using member's team_id
-    team = db.team_details.find_one({"_id": member.get("team_id")})
+    # Get team
+    team = db.teams.find_one({"_id": member["team_id"]})
     if not team:
         return {"success": False, "error": "Team not found"}
     
-    # Build conversation context
-    conversation_history = member.get("chat_history", [])
-    
-    # Add current message to history
-    conversation_history.append({
-        "role": "user",
-        "message": message,
-        "timestamp": datetime.utcnow()
-    })
-    
-    # Build prompt with context
-    if is_welcome:
-        # Welcome message prompt
-        prompt = f"""
-You are Jarvis, an AI hackathon project coordinator.
-
-Welcome {member['name']} ({member['role']}) to the team!
+    # Build AI prompt
+    prompt = f"""
+You are Jarvis, an AI hackathon assistant.
 
 Team: {team['team_name']}
-Problem: {team['problem_statement']}
-Duration: {team['duration_hours']} hours
-
-Skills: {", ".join(member.get("skills", []))}
-
-Create a warm, motivating welcome message that:
-- Speaks directly to {member['name']}
-- Explains how their role helps the team
-- Sounds human, confident, and friendly
-- Avoids generic phrases
-"""
-
-
-    else:
-        # Regular chat prompt with memory
-        recent_history = conversation_history[-5:]  # Last 5 messages for context
-        history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
-        
-        prompt = f"""
-You are Jarvis, an AI hackathon project coordinator having a conversation with {member['name']}.
-
-Recent conversation:
-{history_text}
-
-Member's role: {member['role']}
-Team: {team['team_name']}
+Member: {member['name']} ({member['role']})
 Problem: {team['problem_statement']}
 
-Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination.
+Message: {message}
+
+Respond helpfully and concisely.
 """
     
-    # Call Groq API
+    # Call Groq
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     response = client.chat.completions.create(
         model="llama3-8b-8192",
-        messages=[
-            {"role": "system", "content": "You are Jarvis, a helpful AI coordinator."},
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
-        max_tokens=300
+        max_tokens=200
     )
     
     ai_response = response.choices[0].message.content
     
-    # Add AI response to chat history
-    conversation_history.append({
-        "role": "jarvis",
-        "message": ai_response,
-        "timestamp": datetime.utcnow()
-    })
-    
-    # Update member document with new chat history
+    # Store conversation
     db.members.update_one(
         {"_id": member["_id"]},
-        {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
+        {
+            "$push": {
+                "chat_history": {
+                    "user": message,
+                    "jarvis": ai_response,
+                    "timestamp": datetime.utcnow()
+                }
+            }
+        }
     )
     
-    return {
-        "success": True,
-        "response": ai_response,
-        "chat_history": conversation_history
-    }
+    return {"success": True, "response": ai_response}
 
 @app.get("/debug/routes")
 def debug_routes():
-    return {"routes": ["health", "api/member/{id}", "api/member/token/{token}", "api/team/{id}", "api/chat"]}
-
-from fastapi import Body
-
+    return {"routes": ["/health", "/api/register", "/api/chat"]}
