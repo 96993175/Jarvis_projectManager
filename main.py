@@ -93,6 +93,7 @@ def chat_init(token: str):
     """Initialize chat session - get member and team data"""
     from mongo_client import db
 
+
     # Get member using token
     member = db.members.find_one({"token": token})
     if not member:
