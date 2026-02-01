@@ -11,7 +11,7 @@ from memory_store import save_memory
 
 # Load environment variables
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 app = FastAPI()
 
@@ -157,20 +157,36 @@ Create a warm, motivating welcome message that:
 
         else:
             # Regular chat prompt with memory
-            recent_history = conversation_history[-5:]  # Last 5 messages for context
+            recent_history = conversation_history[-10:]  # Last 10 messages for better context
             history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
+            
+            # Include team timing information
+            hackathon_info = team.get('hackathon', {})
+            timing_info = ""
+            if hackathon_info.get('start_time') and hackathon_info.get('duration_hours'):
+                from datetime import datetime, timedelta
+                start_time = datetime.fromisoformat(str(hackathon_info["start_time"]).replace('Z', '+00:00')) if isinstance(hackathon_info["start_time"], str) else hackathon_info["start_time"]
+                duration_hours = hackathon_info.get("duration_hours", 24)
+                end_time = start_time + timedelta(hours=duration_hours)
+                time_elapsed = datetime.utcnow() - start_time
+                time_remaining = end_time - datetime.utcnow()
+                
+                timing_info = f"\nTime elapsed: {time_elapsed.total_seconds()/3600:.1f} hours"
+                timing_info += f"\nTime remaining: {time_remaining.total_seconds()/3600:.1f} hours"
+                timing_info += f"\nTotal duration: {duration_hours} hours"
             
             prompt = f"""
 You are Jarvis, an AI hackathon project coordinator having a conversation with {member.get('name', 'Team Member')}.
 
-Recent conversation:
+Conversation history:
 {history_text}
 
-Member's role: {member.get('role', 'Team Member')}
+Member role: {member.get('role', 'Team Member')}
+Skills: {", ".join(member.get("skills", []))}
 Team: {team['team_name']}
-Problem: {team['problem_statement']}
+Problem: {team['problem_statement']}{timing_info}
 
-Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination in max 50 words (IMP - GIVE DONT GIVE TEAM INFO OR MEMBER INFO UNTIL ASKED JUST ANSWER THE QUESTION USING THE DATA GIVEN).
+Respond naturally as a helpful AI assistant. Be conversational, remember previous context, help with hackathon coordination, and keep responses under 60 words. Use the conversation history to provide personalized and contextual responses.
 """
         
         # Call Groq API
@@ -210,6 +226,29 @@ Respond naturally as a helpful AI assistant. Be conversational, remember context
         print(f"Error in chat endpoint: {str(e)}")
         return {"success": False, "error": f"An error occurred: {str(e)}"}
 
+@app.get("/api/chat/history")
+def get_chat_history(token: str):
+    """Get chat history for a member"""
+    from mongo_client import db
+
+    try:
+        # Get member using token
+        member = db.members.find_one({"token": token})
+        if not member:
+            return {"success": False, "error": "Member not found or invalid token"}
+
+        # Get chat history
+        chat_history = member.get("chat_history", [])
+        
+        return {
+            "success": True,
+            "history": chat_history
+        }
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in chat history endpoint: {str(e)}")
+        return {"success": False, "error": f"An error occurred: {str(e)}"}
+
 @app.get("/debug/routes")
 def debug_routes():
-    return {"routes": ["health", "api/register", "api/chat/init", "api/chat"]}
+    return {"routes": ["health", "api/register", "api/chat/init", "api/chat", "api/chat/history"]}
