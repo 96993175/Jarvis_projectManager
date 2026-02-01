@@ -4,6 +4,10 @@ from bson import ObjectId
 import secrets
 
 def save_memory(team_name: str, mem_type: str, data: dict):
+    if db is None:
+        print("❌ Error: Database not connected. Cannot save memory.")
+        return None
+
     # Simplified structure: teams + members collections
     if mem_type.upper() == "TEAM":
         collection = db["teams"]

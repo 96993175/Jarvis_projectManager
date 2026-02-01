@@ -1,19 +1,23 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess
 import sys
 import os
-from datetime import datetime
-from groq import Groq
 from fastapi import Body
 from models import RegisterRequest
 from memory_store import save_memory
+
+# Import Services
+from services.memory_service import MemoryService
+from services.intelligence_service import IntelligenceService
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
 
 app = FastAPI()
+
+# Initialize Intelligence Service (Global)
+ai_service = IntelligenceService()
 
 # ✅ CORS Configuration for Render Deployment
 app.add_middleware(
@@ -29,28 +33,26 @@ app.add_middleware(
 def health():
     return {"status": "ok"}
 
-# 🔹 MAIN REGISTER ENDPOINT
+# 🔹 MAIN REGISTER ENDPOINT (Unchanged)
 @app.post("/api/register")
 def register(req: RegisterRequest):
-
     team = req.team_name
 
-    # 1️⃣ Save TEAM memory (Phase-1 simplified structure)
-    team_result = save_memory(team, "TEAM", {
+    # 1️⃣ Save TEAM memory
+    save_memory(team, "TEAM", {
         "team_name": team,
         "problem_statement": req.problem_statement,
         "duration_hours": req.duration_hours
     })
 
-    # 2️⃣ Save MEMBERS with team_name reference
+    # 2️⃣ Save MEMBERS
     member_tokens = []
     for i, member in enumerate(req.members):
         member_data = member.dict()
         member_data.update({
             "member_index": i + 1,
-            "is_leader": (i == 0)  # First member is team leader
+            "is_leader": (i == 0)
         })
-        # save_memory returns the token for this member
         token = save_memory(team, "MEMBER", member_data)
         member_tokens.append({
             "name": member.name,
@@ -58,7 +60,6 @@ def register(req: RegisterRequest):
             "token": token
         })
 
-    # 3️⃣ Return member tokens for link generation
     return {
         "status": "registered", 
         "members": member_tokens
@@ -68,168 +69,99 @@ def register(req: RegisterRequest):
 @app.get("/api/chat/init")
 def chat_init(token: str):
     """Initialize chat session - get member and team data"""
-    from mongo_client import db
-
     try:
-        # Get member using token
-        member = db.members.find_one({"token": token})
-        if not member:
-            return {"success": False, "error": "Member not found or invalid token"}
-
-        # Get team data using team_name
-        team = db.teams.find_one({"team_name": member["team_name"]})
-        if not team:
-            return {"success": False, "error": "Team not found"}
+        context = MemoryService.get_user_context(token)
+        if not context:
+            return {"success": False, "error": "Invalid token"}
+        
+        member = context["member"]
+        team = context["team"]
 
         return {
             "success": True,
             "member": {
                 "name": member.get("name", ""),
-                "role": member.get("role", "")
+                "role": member.get("role", ""),
+                "chat_history": member.get("chat_history", [])
             },
             "team": {
                 "team_name": team.get("team_name", ""),
                 "problem_statement": team.get("problem_statement", "")
-            },
-            "chat_history": member.get("chat_history", [])
+            }
         }
     except Exception as e:
-        # Log the error for debugging
-        print(f"Error in chat init endpoint: {str(e)}")
-        return {"success": False, "error": f"An error occurred: {str(e)}"}
+        print(f"Init Error: {e}")
+        return {"success": False, "error": str(e)}
+
+# 🔹 BACKGROUND TASK: The "Insight Loop"
+def process_user_insight(token: str, user_msg: str, ai_msg: str):
+    """
+    Background task to analyze the interaction and save insights.
+    Does not block the response to the user.
+    """
+    try:
+        # Get fresh context
+        context = MemoryService.get_user_context(token)
+        if not context: return
+
+        # Analyze
+        insight = ai_service.analyze_behavior(user_msg, ai_msg, context)
+        
+        # Save if valid
+        if insight:
+            MemoryService.save_insight(token, insight)
+            
+    except Exception as e:
+        print(f"Background Insight Error: {e}")
 
 # 🔹 CHAT MESSAGE ENDPOINT
 @app.post("/api/chat")
-def chat(message_data: dict = Body(...)):
-    """Handle all chat interactions including welcome messages"""
+def chat(background_tasks: BackgroundTasks, message_data: dict = Body(...)):
+    """
+    Handle chat interactions with Dual-Loop Architecture.
+    1. Generate Response (Interaction Loop)
+    2. Schedule Insight Analysis (Insight Loop)
+    """
     token = message_data.get("token")
     message = message_data.get("message")
+    # minimal support for 'is_welcome' - for now we treat it as normal flow or skip
     is_welcome = message_data.get("is_welcome", False)
     
     if not token or not message:
         return {"success": False, "error": "Missing token or message"}
     
-    from mongo_client import db
-    from groq import Groq
-    import json
-    
     try:
-        # Get member using token
-        member = db.members.find_one({"token": token})
-        if not member:
-            return {"success": False, "error": "Member not found or invalid token"}
+        # 1. Get Context (Includes past Insights!)
+        context = MemoryService.get_user_context(token)
+        if not context:
+            return {"success": False, "error": "Invalid token"}
 
-        # Get team data using team_name
-        team = db.teams.find_one({"team_name": member["team_name"]})
-        if not team:
-            return {"success": False, "error": "Team not found"}
-
-        # Build conversation context
-        conversation_history = member.get("chat_history", [])
-        
-        # Add current message to history
-        conversation_history.append({
-            "role": "user",
-            "message": message,
-            "timestamp": datetime.utcnow()
-        })
-        
-        # Build prompt with context
+        # 2. Generate AI Response
         if is_welcome:
-            # Welcome message prompt
-            prompt = f"""
-You are Jarvis, an AI hackathon project coordinator.
-
-Welcome {member.get('name', 'Team Member')} ({member.get('role', 'Team Member')}) to the team!
-
-Team: {team['team_name']}
-Problem: {team['problem_statement']}
-Duration: {team.get('hackathon', {}).get('duration_hours', 24)} hours
-
-Skills: {", ".join(member.get("skills", []))}
-
-Create a warm, motivating welcome message that:
-- Speaks directly to {member.get('name', 'Team Member')}
-- Sounds human, confident, and friendly
-- Avoids generic phrases
-- Makes the message of max 50 words
-"""
-
+            # Simple welcome logic reusing the gen-ai but with a welcome preamble
+            ai_response = ai_service.generate_response(
+                f"[SYSTEM: This is the first interaction. WELCOME the user to the team {context['team']['team_name']}. Message: {message}]", 
+                context
+            )
         else:
-            # Regular chat prompt with memory
-            recent_history = conversation_history[-5:]  # Last 5 messages for context
-            history_text = "\n".join([f"{msg['role'].upper()}: {msg['message']}" for msg in recent_history[:-1]])
+            ai_response = ai_service.generate_response(message, context)
             
-            prompt = f"""
-You are Jarvis, an AI hackathon project coordinator having a conversation with {member.get('name', 'Team Member')}.
-
-Recent conversation:
-{history_text}
-
-Member's role: {member.get('role', 'Team Member')}
-Team: {team['team_name']}
-Problem: {team['problem_statement']}
-
-Respond naturally as a helpful AI assistant. Be conversational, remember context, and help with hackathon coordination in max 50 words (IMP - GIVE DONT GIVE TEAM INFO OR MEMBER INFO UNTIL ASKED JUST ANSWER THE QUESTION USING THE DATA GIVEN).
-"""
+        # 3. Save Chat Log
+        updated_history = MemoryService.append_chat_history(token, message, ai_response)
         
-        # Call Groq API
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": "You are Jarvis, a helpful AI coordinator."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=300
-        )
-        
-        ai_response = response.choices[0].message.content
-        
-        # Add AI response to chat history
-        conversation_history.append({
-            "role": "jarvis",
-            "message": ai_response,
-            "timestamp": datetime.utcnow()
-        })
-        
-        # Update member document with new chat history
-        db.members.update_one(
-            {"token": token},
-            {
-                "$push": {
-                    "chat_history": {
-                        "$each": [
-                            {
-                                "role": "user",
-                                "message": message,
-                                "timestamp": datetime.utcnow()
-                            },
-                            {
-                                "role": "jarvis",
-                                "message": ai_response,
-                                "timestamp": datetime.utcnow()
-                            }
-                        ]
-                    }
-                },
-                "$set": {"last_active_at": datetime.utcnow()}
-            }
-        )
-
-        member = db.members.find_one({"token": token})
-        recent_history = member["chat_history"][-6:]
+        # 4. Schedule Background Insight Extraction (The "Crazy Part")
+        # We run this in the background so the user gets their answer fast!
+        background_tasks.add_task(process_user_insight, token, message, ai_response)
 
         return {
             "success": True,
             "response": ai_response,
-            "chat_history": conversation_history
+            "chat_history": updated_history
         }
+        
     except Exception as e:
-        # Log the error for debugging
-        print(f"Error in chat endpoint: {str(e)}")
-        return {"success": False, "error": f"An error occurred: {str(e)}"}
+        print(f"Chat Error: {e}")
+        return {"success": False, "error": str(e)}
 
 @app.get("/debug/routes")
 def debug_routes():
