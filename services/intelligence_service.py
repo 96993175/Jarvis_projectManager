@@ -115,3 +115,72 @@ OUTPUT ONLY THE SENTENCE. NO MARKDOWN.
         except Exception as e:
             print(f"❌ Analysis Error: {e}")
             return None
+
+    def generate_project_plan(self, problem_statement: str, prev_context: str = None) -> str:
+        """
+        Generates a detailed, step-by-step project plan.
+        Uses previous plan context if available (Recursive Memory).
+        """
+        if not self.client: return "AI Error"
+
+        context_str = f"\nPREVIOUS PLAN CONTEXT:\n{prev_context}" if prev_context else ""
+
+        prompt = f"""
+You are an expert Project Manager. Create a solid, detailed Step-by-Step Plan to solve this problem.
+
+=== PROBLEM ===
+{problem_statement}
+{context_str}
+
+=== OUTPUT FORMAT ===
+1. **Phase 1: Setup**
+   - Step 1.1: ...
+2. **Phase 2: MVP**
+   - ...
+
+Make it technical, actionable, and robust.
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": "You are a senior tech project manager."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=800
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error generating plan: {e}"
+
+    def summarize_plan(self, plan_text: str) -> str:
+        """
+        Summarizes the detailed plan into a concise context block.
+        This summary is saved to DB to seed the NEXT planning cycle.
+        """
+        if not self.client: return "AI Error"
+
+        prompt = f"""
+Summarize this project plan into a high-level "Context Block" for future reference.
+Focus on the key objectives and current phase.
+
+=== PLAN ===
+{plan_text[:4000]} # Truncate if too long
+
+=== OUTPUT ===
+Concise summary (max 100 words).
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": "Summarize technical plans concisely."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,
+                max_tokens=150
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error summarizing plan: {e}"

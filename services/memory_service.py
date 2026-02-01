@@ -98,3 +98,31 @@ class MemoryService:
         
         db.member_insights.insert_one(doc)
         print(f"🧠 Insight Saved: {insight_text[:50]}...")
+
+    @staticmethod
+    def save_plan_context(token: str, plan_text: str, summary_text: str):
+        """
+        Saves a project plan and its summary.
+        Used for the 'Recursive Context' cycle.
+        """
+        if db is None: return
+
+        doc = {
+            "token": token,  # Who initiated/owned the plan
+            "plan_text": plan_text,
+            "summary_text": summary_text,
+            "timestamp": datetime.now(timezone.utc)
+        }
+        db.plan_history.insert_one(doc)
+        print("📅 Plan & Summary Saved to DB")
+
+    @staticmethod
+    def get_latest_plan_context() -> dict:
+        """
+        Retrieves the most recent plan summary to seed the next planning step.
+        """
+        if db is None: return None
+        
+        # Get the very last plan document
+        doc = db.plan_history.find_one(sort=[("timestamp", -1)])
+        return doc
