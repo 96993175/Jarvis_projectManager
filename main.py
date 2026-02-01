@@ -11,7 +11,7 @@ from memory_store import save_memory
 
 # Load environment variables
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv()
 
 app = FastAPI()
 
