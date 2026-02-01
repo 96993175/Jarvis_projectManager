@@ -197,9 +197,30 @@ Respond naturally as a helpful AI assistant. Be conversational, remember context
         # Update member document with new chat history
         db.members.update_one(
             {"token": token},
-            {"$set": {"chat_history": conversation_history, "last_active_at": datetime.utcnow()}}
+            {
+                "$push": {
+                    "chat_history": {
+                        "$each": [
+                            {
+                                "role": "user",
+                                "message": message,
+                                "timestamp": datetime.utcnow()
+                            },
+                            {
+                                "role": "jarvis",
+                                "message": ai_response,
+                                "timestamp": datetime.utcnow()
+                            }
+                        ]
+                    }
+                },
+                "$set": {"last_active_at": datetime.utcnow()}
+            }
         )
-        
+
+        member = db.members.find_one({"token": token})
+        recent_history = member["chat_history"][-6:]
+
         return {
             "success": True,
             "response": ai_response,
