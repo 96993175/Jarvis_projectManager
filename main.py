@@ -9,13 +9,6 @@ from memory_store import save_memory
 # Import Services
 from services.memory_service import MemoryService
 from services.intelligence_service import IntelligenceService
-from services.project_manager_service import ProjectManagerService
-
-# Import Perception
-# Note: perception is an async module, so we need to run it appropriately or use async endpoints
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from perception.research_loop import run_research_mode
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -23,9 +16,8 @@ load_dotenv()
 
 app = FastAPI()
 
-# Initialize Services
+# Initialize Intelligence Service (Global)
 ai_service = IntelligenceService()
-pm_service = ProjectManagerService()
 
 # ✅ CORS Configuration for Render Deployment
 app.add_middleware(
@@ -173,44 +165,4 @@ def chat(background_tasks: BackgroundTasks, message_data: dict = Body(...)):
 
 @app.get("/debug/routes")
 def debug_routes():
-    return {"routes": ["health", "api/register", "api/chat/init", "api/chat", "api/manager/plan", "api/research"]}
-
-# 🔹 PROJECT MANAGER ENDPOINTS
-@app.post("/api/manager/plan")
-def generate_project_plan(data: dict = Body(...)):
-    """
-    Triggers the 'Boss Mode' Planning Cycle.
-    1. Generates Plan
-    2. Broadcasts to WhatsApp
-    3. Saves Context
-    """
-    token = data.get("token")
-    problem = data.get("problem_statement")
-    
-    if not token or not problem:
-        return {"success": False, "error": "Missing token or problem"}
-        
-    try:
-        result = pm_service.start_planning_cycle(token, problem)
-        return result
-    except Exception as e:
-        print(f"PM Error: {e}")
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/research")
-async def do_research(data: dict = Body(...)):
-    """
-    Triggers 'Perception Mode' Research.
-    Runs an async browser loop to gather info.
-    """
-    query = data.get("query")
-    if not query:
-        return {"success": False, "error": "Missing query"}
-        
-    try:
-        # Run the async research loop
-        findings = await run_research_mode(query)
-        return {"success": True, "findings": findings}
-    except Exception as e:
-        print(f"Research Error: {e}")
-        return {"success": False, "error": str(e)}
+    return {"routes": ["health", "api/register", "api/chat/init", "api/chat"]}
