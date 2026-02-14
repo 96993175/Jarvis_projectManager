@@ -115,3 +115,36 @@ OUTPUT ONLY THE SENTENCE. NO MARKDOWN.
         except Exception as e:
             print(f"❌ Analysis Error: {e}")
             return None
+
+    def summarize_chat(self, messages: list) -> str:
+        """
+        Summarizes a fast-moving chat history into a concise memory.
+        """
+        if not self.client: return "Summary unavailable (No AI)."
+
+        text_block = "\\n".join([f"{m['role']}: {m['message']}" for m in messages])
+        
+        prompt = f"""
+        Summarize this conversation segment for future context.
+        Focus on:
+        - Key decisions made.
+        - Tasks completed or assigned.
+        - User preferences or important facts.
+        
+        === CONVERSATION ===
+        {text_block}
+        
+        OUTPUT A SINGLE PARAGRAPH SUMMARY.
+        """
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=200
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ Summary Error: {e}")
+            return "Failed to generate summary."

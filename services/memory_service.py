@@ -65,13 +65,21 @@ class MemoryService:
             "chat_history": recent_chat,
             "active_goals": active_goals,
             "instructions": instructions,
-            "latest_summary": latest_summary
+            "latest_summary": latest_summary,
+            "insights": []
         }
 
     @staticmethod
-    def append_chat_history(token: str, user_msg: str, ai_msg: str):
+    def append_chat_history(token: str, user_msg: str, ai_msg: str, ai_service=None):
         """
-        Appends to member_chat collection and triggers summarization every 5 messages.
+        Appends to member_chat.
+        Logic:
+        1. Add new messages.
+        2. if total > 20 (10 turns):
+           - Take oldest 10 messages (5 turns).
+           - Summarize them using AI.
+           - Store summary in member_chat_summery.
+           - Remove them from member_chat.
         """
         if db is None: return
 
@@ -93,30 +101,40 @@ class MemoryService:
         )
         
         # Check for Summarization Trigger
-        # Get current message count
         chat_doc = db.member_chat.find_one({"token": token})
-        msg_count = len(chat_doc.get("messages", []))
+        messages = chat_doc.get("messages", [])
+        msg_count = len(messages)
         
-        # Basic trigger: Every 5 interactions (10 messages total: 5 user + 5 AI)
-        # We check if (msg_count / 2) % 5 == 0? Or just simply msg_count > 0 and msg_count % 10 == 0
-        if msg_count > 0 and msg_count % 10 == 0:
-            MemoryService.generate_and_save_summary(token, chat_doc.get("messages", []))
+        # Trigger if we have more than 20 messages (10 turns).
+        # We want to keep the "Last 5" (10 msgs), so we summarize everything before that.
+        if msg_count >= 20 and ai_service:
+            # We want to keep the NEWEST 10 messages (5 turns).
+            # So we summarize the OLDEST (Total - 10) messages.
+            # But the user said "when all new 5 conversations added... summarize that all 5".
+            # So let's extract the FIRST 10 messages (Oldest 5 turns).
+            
+            msgs_to_summarize = messages[:10]
+            msgs_to_keep = messages[10:]
+            
+            MemoryService.generate_and_save_summary(token, msgs_to_summarize, ai_service)
+            
+            # Replace the array with just the kept messages
+            db.member_chat.update_one(
+                {"token": token},
+                {"$set": {"messages": msgs_to_keep}}
+            )
+            print(f"[MEMORY] Cleaned up chat. Kept {len(msgs_to_keep)} messages.")
+            return msgs_to_keep
 
         # Return the updated history (last 10 items) for the UI
-        return chat_doc.get("messages", [])[-10:]
+        return messages[-10:]
 
     @staticmethod
-    def generate_and_save_summary(token: str, all_messages: list):
+    def generate_and_save_summary(token: str, messages: list, ai_service):
         """
-        Generates a summary of the recent conversation and saves to member_chat_summery.
+        Generates a summary of the provided messages and saves to member_chat_summery.
         """
-        # Take the last 10 messages for summary
-        recent_msgs = all_messages[-10:]
-        
-        # In a real scenario, this would call the LLM to summarize.
-        # For now, we'll create a placeholder summary or simple concatenation.
-        # TODO: Replace with actual LLM call
-        summary_text = f"User discussed: {recent_msgs[0]['message'][:20]}... and {len(recent_msgs)} other messages."
+        summary_text = ai_service.summarize_chat(messages)
         
         member = db.members.find_one({"token": token})
         member_name = member.get("name", "Unknown") if member else "Unknown"
@@ -127,7 +145,71 @@ class MemoryService:
             "summary_text": summary_text,
             "timestamp": datetime.now(timezone.utc)
         })
-        print(f"📝 Summary Generated for {member_name}")
+        print(f"[MEMORY] Summary Generated for {member_name}")
+
+    @staticmethod
+    def append_manager_chat_history(user_msg: str, ai_msg: str, ai_service=None):
+        """
+        Appends to manager_chat (Main Jarvis).
+        Logic:
+        1. Add new messages.
+        2. if total > 20 (10 turns):
+           - Summarize oldest 10 messages.
+           - Store summary in manager_chat_summery.
+           - Keep newest 10 messages.
+        """
+        if db is None: return
+
+        timestamp = datetime.now(timezone.utc)
+        
+        entry = [
+            {"role": "user", "message": user_msg, "timestamp": timestamp},
+            {"role": "jarvis", "message": ai_msg, "timestamp": timestamp}
+        ]
+
+        # Update manager_chat
+        # We use a fixed ID for the manager, or just a single document if we want.
+        # Let's assume a single document or simple collection. 
+        # Using a fixed "token" or "id" for manager makes it consistent.
+        manager_id = "MANAGER_MAIN"
+
+        db.manager_chat.update_one(
+            {"manager_id": manager_id},
+            {
+                "$push": {"messages": {"$each": entry}},
+                "$set": {"last_updated": timestamp}
+            },
+            upsert=True
+        )
+        
+        # Check for Summarization Trigger
+        chat_doc = db.manager_chat.find_one({"manager_id": manager_id})
+        messages = chat_doc.get("messages", [])
+        msg_count = len(messages)
+        
+        if msg_count >= 20 and ai_service:
+            msgs_to_summarize = messages[:10]
+            msgs_to_keep = messages[10:]
+            
+            # Generate Summary
+            summary_text = ai_service.summarize_chat(msgs_to_summarize)
+            
+            # Save Summary
+            db.manager_chat_summery.insert_one({
+                "manager_id": manager_id,
+                "summary_text": summary_text,
+                "timestamp": datetime.now(timezone.utc)
+            })
+            print(f"[MEMORY] Manager Chat Summarized.")
+            
+            # Cleanup
+            db.manager_chat.update_one(
+                {"manager_id": manager_id},
+                {"$set": {"messages": msgs_to_keep}}
+            )
+            return msgs_to_keep
+
+        return messages[-10:]
 
     @staticmethod
     def save_insight(token: str, insight_text: str):

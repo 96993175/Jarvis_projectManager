@@ -147,7 +147,7 @@ def chat(background_tasks: BackgroundTasks, message_data: dict = Body(...)):
             ai_response = ai_service.generate_response(message, context)
             
         # 3. Save Chat Log
-        updated_history = MemoryService.append_chat_history(token, message, ai_response)
+        updated_history = MemoryService.append_chat_history(token, message, ai_response, ai_service)
         
         # 4. Schedule Background Insight Extraction (The "Crazy Part")
         # We run this in the background so the user gets their answer fast!
